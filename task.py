@@ -1,0 +1,151 @@
+# First Run
+# poetry install
+
+# Import the datasets library from Hugging Face
+from datasets import load_dataset
+
+# Import the torch library for deep learning
+import torch
+
+# Check if a GPU is available and set the device accordingly
+device = "cuda" if torch.cuda.is_available() else "cpu"
+# Print the device name
+print(device)
+
+#############################################################
+
+# Use the version 3.0.0 of the dataset, which has better quality and consistency
+dataset = load_dataset("cnn_dailymail", version="3.0.0")
+print(f"Features: {dataset['train'].column_names}")
+
+sample = dataset["train"][1]
+print(f"""
+Article (excerpt of 500 characters, total length: {len(sample["article"])}):
+""")
+print(sample["article"][:500])
+print(f'\nSummary (length: {len(sample["highlights"])}):')
+print(sample["highlights"])
+
+sample_text = dataset["train"][1]["article"][:2000]
+print(sample_text)
+
+#############################################################
+
+# We'll collect the generated summaries of each model in a dictionary
+summaries = {}
+
+#############################################################
+
+import nltk
+from nltk.tokenize import sent_tokenize
+nltk.download("punkt")
+
+string = "The U.S. are a country. The U.N. is an organization."
+sent_tokenize(string)
+
+#############################################################
+# GPT2
+
+# Import the pipeline and set_seed functions from the transformers library
+from transformers import pipeline, set_seed
+
+# Set the random seed for the pipeline object to 42, which makes the results reproducible
+set_seed(42)
+
+# Create a pipeline object that can perform text generation using the gpt2-xl model
+pipe = pipeline("text-generation", model="gpt2-xl")
+
+# Define a query for the text generation task, which consists of a sample text and a TL;DR prompt
+gpt2_query = sample_text + "\nTL;DR:\n"
+
+# Use the pipe object to generate a text from the query, with a maximum length of 512 tokens and removing extra spaces
+pipe_out = pipe(gpt2_query, max_length=512, clean_up_tokenization_spaces=True)
+
+# Extract the generated text from the first dictionary in the list and remove the query part
+# Use the sent_tokenize function to split the generated text into sentences and join them with newlines
+# Store the result in a dictionary called summaries, with the key "gpt2"
+summaries["gpt2"] = "\n".join(sent_tokenize(pipe_out[0]["generated_text"][len(gpt2_query) :]))
+
+print(summaries)
+
+#############################################################
+#T5
+
+# Import the pipeline function from the transformers library
+from transformers import pipeline
+# Create a pipeline object that can perform summarization using the t5-large model
+pipe = pipeline("summarization", model="t5-large")
+
+# Use the pipe object to generate a summary for the sample text
+pipe_out = pipe(sample_text)
+
+# Extract the summary text from the first dictionary in the list
+# Use the sent_tokenize function to split the summary text into sentences and join them with newlines
+# Store the result in a dictionary called summaries, with the key "t5"
+summaries["t5"] = "\n".join(sent_tokenize(pipe_out[0]["summary_text"]))
+
+#############################################################
+# BART
+
+# Import the pipeline function from the transformers library
+from transformers import pipeline
+# Create a pipeline object that can perform summarization using the facebook/bart-large-cnn model
+pipe = pipeline("summarization", model="facebook/bart-large-cnn")
+
+# Use the pipe object to generate a summary for the sample text
+pipe_out = pipe(sample_text)
+
+# Extract the summary text from the first dictionary in the list
+# Use the sent_tokenize function to split the summary text into sentences and join them with newlines
+# Store the result in a dictionary called summaries, with the key "bart"
+summaries["bart"] = "\n".join(sent_tokenize(pipe_out[0]["summary_text"]))
+
+
+#############################################################
+# Comparing the dataset
+
+print("GROUND TRUTH")
+print(dataset["train"][1]["highlights"])
+print("")
+
+for model_name in summaries:
+  print(model_name.upper())
+  print(summaries[model_name])
+  print("")
+
+#############################################################
+# Evaluation -  ROUGE
+
+# Import the evaluate library from Hugging Face
+import evaluate
+# Use the load function to load the ROUGE metric from the Hugging Face Hub
+rouge_metric = evaluate.load("rouge")
+# Use the description attribute to get a brief description of the metric
+rouge_metric.description
+
+
+
+# Import the pandas library for data analysis
+import pandas as pd
+
+# Get the reference summary from the dataset
+reference = dataset["train"][1]["highlights"]
+# Create an empty list to store the records of the ROUGE scores
+records = []
+
+# Define a list of the ROUGE metrics to use
+rouge_names = ["rouge1", "rouge2", "rougeL", "rougeLsum"]
+# Loop through the summaries dictionary, which contains the summaries generated by different models
+for model_name in summaries:
+  print(model_name)
+  # Add the prediction and reference summary to the rouge_metric object, which computes the ROUGE scores
+  rouge_metric.add(prediction=summaries[model_name], reference=reference)
+  # Compute and get the ROUGE scores as a dictionary
+  score = rouge_metric.compute()
+  # Create a dictionary that contains only the ROUGE scores for each metric, without the precision and recall values
+  rouge_dict = dict((rn, score[rn]) for rn in rouge_names)
+  # Append the rouge_dict to the records list
+  records.append(rouge_dict)
+
+# Create a pandas DataFrame from the records list, using the model names as the index
+pd.DataFrame.from_records(records, index=summaries.keys())
